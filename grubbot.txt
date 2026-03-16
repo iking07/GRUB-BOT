@@ -1,4 +1,4 @@
-grubbot
+grub-bot
 Architecture & Project Overview
 Give it your tools. It generates data, finetunes a small local model, finds where it fails,
 and keeps improving until it's reliable.
