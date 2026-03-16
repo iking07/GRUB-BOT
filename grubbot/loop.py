@@ -1,5 +1,5 @@
 import json
-import random
+import os
 from typing import List, Dict, Any
 from pydantic import BaseModel
 from loguru import logger
@@ -7,7 +7,20 @@ from loguru import logger
 from .config import GrubbotConfig, ToolDefinition
 from .cluster import FailureCluster
 from .providers.base import BaseProvider
-from .datagen import build_datagen_prompt
+from .finetune import load_model, prepare_dataset, train, save_checkpoint
+from .eval import evaluate
+from .cluster import embed_failures, cluster_failures
+
+
+def _extract_json_block(text: str) -> str:
+    cleaned = text.strip()
+    if "```json" in cleaned:
+        cleaned = cleaned.split("```json", 1)[1]
+        cleaned = cleaned.split("```", 1)[0]
+    elif "```" in cleaned:
+        cleaned = cleaned.split("```", 1)[1]
+        cleaned = cleaned.split("```", 1)[0]
+    return cleaned.strip()
 
 class LoopResult(BaseModel):
     iterations: int
@@ -37,12 +50,7 @@ Output ONLY a JSON array of objects, with each object structured exactly like:
     system_instruction = "You are an expert synthetic data generator fixing AI failure cases. Output raw JSON arrays."
     
     raw_response = provider.generate(prompt, system=system_instruction)
-    
-    # Simple JSON extraction
-    if "```json" in raw_response:
-        raw_response = raw_response.split("```json")[1].split("```")[0].strip()
-    elif "```" in raw_response:
-        raw_response = raw_response.split("```")[1].split("```")[0].strip()
+    raw_response = _extract_json_block(raw_response)
         
     all_examples = []
         
@@ -64,7 +72,11 @@ Output ONLY a JSON array of objects, with each object structured exactly like:
         
     try:
         data = json.loads(raw_response)
+        if not isinstance(data, list):
+            return []
         for item in data:
+             if "user_query" not in item or "expected_tool_call" not in item:
+                continue
              all_examples.append({
                 "tools": tools_schema,
                 "messages": [{"role": "user", "content": item["user_query"]}],
@@ -75,6 +87,77 @@ Output ONLY a JSON array of objects, with each object structured exactly like:
         
     return all_examples
 
-def run_loop(config: GrubbotConfig) -> LoopResult:
-    """Normally orchestrates the retrain loop between eval, cluster, data-aug, and finetune."""
-    pass
+def run_loop(
+    config: GrubbotConfig,
+    provider: BaseProvider,
+    start_model_path: str | None = None,
+    train_path: str = "data/train.jsonl",
+    eval_path: str = "data/eval.jsonl",
+) -> LoopResult:
+    os.makedirs("models", exist_ok=True)
+    os.makedirs("data/failures", exist_ok=True)
+
+    current_model_path = start_model_path or config.model_name
+    best_accuracy = 0.0
+    best_per_tool = {t.name: 0.0 for t in config.tools}
+    clusters_resolved: List[str] = []
+    completed_iterations = 0
+
+    for iteration in range(1, config.goal.max_iterations + 1):
+        logger.info(f"--- Loop Iteration {iteration}/{config.goal.max_iterations} ---")
+        output_dir = f"models/grubbot-{config.model_name.replace('/', '-')}-v{iteration}"
+
+        logger.info(f"Stage 2 - Finetuning from {current_model_path}")
+        model, tokenizer = load_model(current_model_path)
+        dataset = prepare_dataset(train_path, tokenizer)
+        train(model, tokenizer, dataset, output_dir)
+        save_checkpoint(model, tokenizer, output_dir)
+        current_model_path = output_dir
+
+        logger.info("Stage 3 - Evaluation")
+        result = evaluate(model, tokenizer, eval_path, config.tools)
+        completed_iterations = iteration
+
+        logger.info(f"Iteration accuracy: {result.overall_accuracy * 100:.2f}%")
+        if result.overall_accuracy >= best_accuracy:
+            best_accuracy = result.overall_accuracy
+            best_per_tool = result.per_tool_accuracy
+
+        if result.overall_accuracy >= config.goal.target_accuracy:
+            logger.info("Target met. Ending loop.")
+            break
+
+        if iteration >= config.goal.max_iterations:
+            logger.info("Max iterations reached. Ending loop.")
+            break
+
+        if not result.failures:
+            logger.info("No failures found. Ending loop.")
+            break
+
+        logger.info("Stage 4 - Cluster failures and generate targeted data")
+        failures_path = f"data/failures/iter_{iteration}.json"
+        with open(failures_path, "w", encoding="utf-8") as f:
+            json.dump([fx.model_dump() for fx in result.failures], f, indent=2)
+
+        embeddings = embed_failures(result.failures)
+        clusters = cluster_failures(result.failures, embeddings)
+
+        appended = 0
+        with open(train_path, "a", encoding="utf-8") as f:
+            for cluster in clusters:
+                clusters_resolved.append(cluster.label)
+                targeted = generate_targeted_data(cluster, config.tools, provider, target_count=min(20, max(6, cluster.size * 3)))
+                for idx, ex in enumerate(targeted):
+                    ex["id"] = f"train_iter{iteration}_{cluster.cluster_id}_{idx}"
+                    f.write(json.dumps(ex) + "\n")
+                    appended += 1
+
+        logger.info(f"Appended {appended} targeted examples.")
+
+    return LoopResult(
+        iterations=completed_iterations,
+        final_accuracy=best_accuracy,
+        per_tool_accuracy=best_per_tool,
+        clusters_resolved=clusters_resolved,
+    )
