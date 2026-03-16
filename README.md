@@ -2,7 +2,7 @@
   <img src="assets/logo.png" alt="Grubbot Logo" width="600">
 </p>
 
-<h1 align="center">Grubbot</h1>
+<h1 align="center">GRUB-BOT</h1>
 
 <p align="center">
   <strong>Dig until it works.</strong><br>
@@ -43,27 +43,94 @@ Existing solutions (like traditional fine-tuning scripts) all share the same fla
 ### 1. Install Dependencies
 ```bash
 # Clone the repository and install in editable mode
-pip install -e .
+pip install -e ".[dev]"
 ```
 
+> If `unsloth` is not installed, Grubbot will use a Transformers fallback training path. This works for functional runs and smoke tests, but is slower and less optimized.
+
 ### 2. Configure Environment
-Copy the example environment variables and add your preferred provider credentials:
+Copy the example environment variables and add your provider credentials in a local `.env` file:
 ```bash
 cp .env.example .env
 ```
-*(Grubbot uses Gemini or Groq to synthesize the initial ChatML dataset)*
 
-### 3. Run the Pipeline!
-
-**If you don't have a GPU (Run Data Generation Only):**
-```bash
-grubbot datagen --tools examples/tools.yaml --goal examples/goal.md --provider gemini --count 50
+Set values in `.env`:
+```env
+GEMINI_API_KEY=
+GROQ_API_KEY=
+HF_TOKEN=
 ```
 
-**If you have an NVIDIA GPU (Run the Autonomous Loop!):**
+Security notes:
+- Keep real keys only in `.env`.
+- Never commit `.env` to Git.
+- Keep `.env.example` as placeholders only.
+- If keys were ever exposed, rotate them immediately.
+
+### 3. Pick a Provider
+- `gemini`: requires `GEMINI_API_KEY`
+- `groq`: requires `GROQ_API_KEY`
+- `ollama`: requires local Ollama runtime + local model
+- `mock`: no API key required (recommended for smoke tests)
+
+### 4. Run a Smoke Test (No API Key)
 ```bash
-grubbot run --tools examples/tools.yaml --goal examples/goal.md --model unsloth/qwen2.5-3b
+python -m grubbot.cli run --tools examples/tools_smoke.yaml --goal examples/goal_smoke.md --model sshleifer/tiny-gpt2 --provider mock
 ```
+
+### 5. Run the Pipeline
+
+**Data generation only:**
+```bash
+python -m grubbot.cli datagen --tools examples/tools.yaml --goal examples/goal.md --provider gemini --count 50
+```
+
+**Full pipeline run:**
+```bash
+python -m grubbot.cli run --tools examples/tools.yaml --goal examples/goal.md --model unsloth/qwen2.5-3b --provider groq
+```
+
+---
+
+## 🧪 CLI Commands
+
+Run all stages (datagen + train/eval + loop):
+```bash
+python -m grubbot.cli run --tools examples/tools.yaml --goal examples/goal.md --model unsloth/qwen2.5-3b --provider groq
+```
+
+Run data generation only:
+```bash
+python -m grubbot.cli datagen --tools examples/tools.yaml --goal examples/goal.md --provider gemini --count 50
+```
+
+Run evaluation only:
+```bash
+python -m grubbot.cli eval --model models/grubbot-unsloth-qwen2.5-3b-v1 --data data/eval.jsonl --tools examples/tools.yaml
+```
+
+Resume loop from an existing checkpoint:
+```bash
+python -m grubbot.cli loop --tools examples/tools.yaml --goal examples/goal.md --model models/grubbot-unsloth-qwen2.5-3b-v1 --provider groq
+```
+
+---
+
+## 🔐 Pre-Push Security Checklist
+
+Run this before pushing:
+```bash
+git grep -n -I -E "AIza[0-9A-Za-z\-_]{20,}|gsk_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}" -- .
+```
+
+Expected result: no matches.
+
+Also confirm:
+```bash
+git status --short
+```
+
+Ensure no secret files are staged.
 
 ---
 
