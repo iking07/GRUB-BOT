@@ -2,6 +2,7 @@ from .base import BaseProvider
 from .gemini import GeminiProvider
 from .groq import GroqProvider
 from .ollama import OllamaProvider
+from .mock import MockProvider
 
 def get_provider(name: str) -> BaseProvider:
     name_lower = name.lower()
@@ -13,5 +14,7 @@ def get_provider(name: str) -> BaseProvider:
         return OllamaProvider()
     elif name_lower.startswith('ollama/'):
         return OllamaProvider(model=name_lower)
+    elif name_lower == 'mock':
+        return MockProvider()
     else:
         raise ValueError(f"Unknown provider: {name}")
