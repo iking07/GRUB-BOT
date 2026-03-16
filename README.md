@@ -90,29 +90,7 @@ python -m grubbot.cli datagen --tools examples/tools.yaml --goal examples/goal.m
 python -m grubbot.cli run --tools examples/tools.yaml --goal examples/goal.md --model unsloth/qwen2.5-3b --provider groq
 ```
 
----
 
-## 🧪 CLI Commands
-
-Run all stages (datagen + train/eval + loop):
-```bash
-python -m grubbot.cli run --tools examples/tools.yaml --goal examples/goal.md --model unsloth/qwen2.5-3b --provider groq
-```
-
-Run data generation only:
-```bash
-python -m grubbot.cli datagen --tools examples/tools.yaml --goal examples/goal.md --provider gemini --count 50
-```
-
-Run evaluation only:
-```bash
-python -m grubbot.cli eval --model models/grubbot-unsloth-qwen2.5-3b-v1 --data data/eval.jsonl --tools examples/tools.yaml
-```
-
-Resume loop from an existing checkpoint:
-```bash
-python -m grubbot.cli loop --tools examples/tools.yaml --goal examples/goal.md --model models/grubbot-unsloth-qwen2.5-3b-v1 --provider groq
-```
 
 ---
 
