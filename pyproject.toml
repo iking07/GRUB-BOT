@@ -30,3 +30,7 @@ grubbot = "grubbot.cli:cli"
 
 [project.optional-dependencies]
 dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["grubbot", "grubbot.*"]
+exclude = ["assets", "assets.*", "tests", "tests.*", "examples", "examples.*"]
