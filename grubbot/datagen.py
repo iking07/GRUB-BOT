@@ -4,6 +4,19 @@ from typing import List, Dict, Any
 from .config import ToolDefinition, GoalConfig
 from .providers.base import BaseProvider
 
+
+def _strip_markdown_fences(raw_response: str) -> str:
+    cleaned = raw_response.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+
+    return cleaned.strip()
+
 def build_datagen_prompt(tool: ToolDefinition, count: int) -> str:
     """Builds a prompt asking the LLM to generate tool-use examples based on the tool definition."""
     prompt = f"""
@@ -65,15 +78,16 @@ def generate_examples(tools: List[ToolDefinition], goal: GoalConfig, provider: B
         
         raw_response = provider.generate(prompt=prompt, system=system_instruction)
         
-        # Clean up Markdown JSON blocks if LLM still formats it
-        if raw_response.startswith("```json"):
-            raw_response = raw_response[7:]
-        if raw_response.endswith("```"):
-            raw_response = raw_response[:-3]
+        raw_response = _strip_markdown_fences(raw_response)
             
         try:
             generated_items = json.loads(raw_response.strip())
+            if not isinstance(generated_items, list):
+                print(f"Provider output for tool {tool.name} was not a JSON array. Skipping tool output.")
+                continue
             for item in generated_items:
+                if "user_query" not in item or "expected_tool_call" not in item:
+                    continue
                 # Format to ChatML with tool calls
                 formatted_example = {
                     "tools": tools_schema,
