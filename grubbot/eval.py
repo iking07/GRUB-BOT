@@ -1,7 +1,7 @@
 import json
-import re
 from typing import List, Dict, Any, Tuple
 from pydantic import BaseModel
+import torch
 from .config import ToolDefinition
 
 class FailedExample(BaseModel):
@@ -16,16 +16,40 @@ class EvalResult(BaseModel):
     per_tool_accuracy: Dict[str, float]
     failures: List[FailedExample]
 
+
+def _extract_json_block(text: str) -> str:
+    cleaned = text.strip()
+    if "```json" in cleaned:
+        cleaned = cleaned.split("```json", 1)[1]
+        cleaned = cleaned.split("```", 1)[0]
+    elif "```" in cleaned:
+        cleaned = cleaned.split("```", 1)[1]
+        cleaned = cleaned.split("```", 1)[0]
+    return cleaned.strip()
+
+
+def _render_chat(tokenizer, conversation: List[Dict[str, str]], add_generation_prompt: bool = False) -> str:
+    if getattr(tokenizer, "chat_template", None):
+        return tokenizer.apply_chat_template(
+            conversation,
+            tokenize=False,
+            add_generation_prompt=add_generation_prompt,
+        )
+
+    rendered = []
+    for msg in conversation:
+        rendered.append(f"{msg['role'].upper()}: {msg['content']}")
+    if add_generation_prompt:
+        rendered.append("ASSISTANT:")
+    return "\n".join(rendered)
+
 def score_single(prediction: str, expected: Dict[str, Any]) -> Tuple[bool, str]:
     """Score a single prediction string against the expected JSON dict.
     Returns (is_correct, error_type_if_any)
     """
     try:
         # Simple extraction if model wraps in markdown
-        if "```json" in prediction:
-            prediction = prediction.split("```json")[1].split("```")[0].strip()
-        elif "```" in prediction:
-            prediction = prediction.split("```")[1].split("```")[0].strip()
+        prediction = _extract_json_block(prediction)
 
         pred_json = json.loads(prediction)
     except json.JSONDecodeError:
@@ -52,10 +76,12 @@ def score_single(prediction: str, expected: Dict[str, Any]) -> Tuple[bool, str]:
     return True, ""
 
 def evaluate(model, tokenizer, eval_path: str, tools: List[ToolDefinition]) -> EvalResult:
-    # Model is passed if using UNsloth inference directly
-    # For simplicity of standalone eval in this iteration, we mock inference or require generation logic
-    from unsloth import FastLanguageModel
-    FastLanguageModel.for_inference(model)
+    # If model supports the unsloth path, enable inference optimizations.
+    try:
+        from unsloth import FastLanguageModel
+        FastLanguageModel.for_inference(model)
+    except Exception:
+        pass
     
     with open(eval_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
@@ -65,6 +91,10 @@ def evaluate(model, tokenizer, eval_path: str, tools: List[ToolDefinition]) -> E
     tool_counts = {t.name: {"total": 0, "correct": 0} for t in tools}
     failures = []
     
+    device = "cuda" if hasattr(model, "device") and str(model.device).startswith("cuda") else ("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    model.eval()
+
     for line in lines:
         data = json.loads(line)
         user_query = data["messages"][0]["content"]
@@ -79,12 +109,15 @@ def evaluate(model, tokenizer, eval_path: str, tools: List[ToolDefinition]) -> E
         conversation = [
             {"role": "user", "content": user_query}
         ]
-        text = tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
-        inputs = tokenizer([text], return_tensors="pt").to("cuda")
-        
-        outputs = model.generate(**inputs, max_new_tokens=256, use_cache=True)
-        # Decode only the new output tokens
-        pred_text = tokenizer.batch_decode(outputs[:, inputs.input_ids.shape[1]:], skip_special_tokens=True)[0]
+        text = _render_chat(tokenizer, conversation, add_generation_prompt=True)
+        inputs = tokenizer([text], return_tensors="pt").to(device)
+
+        try:
+            outputs = model.generate(**inputs, max_new_tokens=256, use_cache=True)
+            # Decode only the new output tokens
+            pred_text = tokenizer.batch_decode(outputs[:, inputs.input_ids.shape[1]:], skip_special_tokens=True)[0]
+        except Exception as e:
+            pred_text = f"GENERATION_ERROR: {e}"
         
         is_correct, error_type = score_single(pred_text, expected)
         
