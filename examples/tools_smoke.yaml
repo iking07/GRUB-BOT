@@ -1,0 +1,12 @@
+tools:
+  - name: get_weather
+    description: Get weather for a location
+    parameters:
+      location:
+        type: string
+        description: City name
+        required: true
+      unit:
+        type: string
+        description: Temperature unit
+        required: false
