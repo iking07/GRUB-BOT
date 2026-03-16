@@ -1,6 +1,7 @@
 import yaml
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
+import re
 
 class ToolParameter(BaseModel):
     type: str
@@ -15,7 +16,7 @@ class ToolDefinition(BaseModel):
 class GoalConfig(BaseModel):
     target_accuracy: float = Field(ge=0.0, le=1.0)
     max_iterations: int = Field(gt=0)
-    priorities: List[str] = []
+    priorities: List[str] = Field(default_factory=list)
 
 class GrubbotConfig(BaseModel):
     tools: List[ToolDefinition]
@@ -61,12 +62,10 @@ def load_goal_from_markdown(path: str) -> GoalConfig:
         lower_line = line.lower()
         if "target:" in lower_line:
             # Extract target percentage (e.g. 90%+)
-            import re
             match = re.search(r"(\d+)%", lower_line)
             if match:
                 target_accuracy = float(match.group(1)) / 100.0
         elif "max iterations:" in lower_line:
-            import re
             match = re.search(r"(\d+)", lower_line)
             if match:
                 max_iterations = int(match.group(1))
