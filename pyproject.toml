@@ -22,7 +22,9 @@ dependencies = [
     "click",
     "python-dotenv",
     "loguru",
-    "torch"
+    "torch",
+    "fastapi",
+    "uvicorn"
 ]
 
 [project.scripts]
